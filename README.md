@@ -6,7 +6,7 @@ Really simple script to ping a server every n seconds and print a nicely formatt
 
 I'm currently using a 2.8" TFT screen from Adafruit to keep it always in sight.
 
-![Working PingingPi](http://url/to/img.png)
+![Working PingingPi](http://i.imgur.com/XdKprKY.jpg)
 
 TODO:
     - Add arguments to set time between pings and server to hit
