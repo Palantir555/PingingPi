@@ -1,6 +1,7 @@
 import time
 import led_colours
 import binascii
+import sys
 
 PIXEL_SIZE=3 #imported from pixelpi.py
 LED_STRIP_LEN=47
@@ -15,14 +16,11 @@ class CliLogger:
         pass
 
 class lpd6803_driver:
+    default_colour = led_colours.BLACK
     def __init__(self, array_led_num, spi_dev_path='/dev/spidev0.0'):
         self.spidev_path = spi_dev_path
         self.led_array_len = array_led_num
-        #LPD6803 has 5 bit color, this seems to work but is not exact.
         self.spidev = file(self.spidev_path, "wb")
-        self.gamma = bytearray(256)
-        for i in range(256):
-            self.gamma[i] = int(pow(float(i) / 255.0, 2.0) * 255.0 + 0.5)
 
     def write_stream(self, pixels):
         pixel_out_bytes = bytearray(2)
@@ -47,17 +45,25 @@ class lpd6803_driver:
 
         self.spidev.write(bytearray(len(pixels) / 8 + 1))
 
-    # Apply Gamma Correction and RGB / GRB reordering
-    # Optionally perform brightness adjustment
-    def filter_pixel(self, input_pixel, brightness):
-        output_pixel = bytearray(PIXEL_SIZE)
+    @staticmethod
+    def pixel_adjust_brightness(input_pixel, brightness):
         input_pixel[0] = int(brightness * input_pixel[0])
         input_pixel[1] = int(brightness * input_pixel[1])
         input_pixel[2] = int(brightness * input_pixel[2])
-        output_pixel[0] = self.gamma[input_pixel[0]]
-        output_pixel[1] = self.gamma[input_pixel[1]]
-        output_pixel[2] = self.gamma[input_pixel[2]]
+        return input_pixel
+
+    @staticmethod
+    def pixel_rgb_to_grb(input_pixel):
+        output_pixel = bytearray(PIXEL_SIZE)
+        output_pixel[0] = input_pixel[2]
+        output_pixel[1] = input_pixel[0]
+        output_pixel[2] = input_pixel[1]
         return output_pixel
+
+    def filter_pixel(self, input_pixel, brightness):
+        input_pixel = self.pixel_adjust_brightness(input_pixel, brightness)
+        input_pixel = self.pixel_rgb_to_grb(input_pixel)
+        return input_pixel
 
     def routine_all_on(self):
         print("Turning all LEDs On")
@@ -75,21 +81,21 @@ class lpd6803_driver:
         self.write_stream(pixel_output)
         self.spidev.flush()
 
-    def routine_chase(self):
-        pixel_output = bytearray(self.led_array_len + 3)
-        current_color = bytearray(PIXEL_SIZE)
-        pixel_index = 0
-        while True:
-            for current_color[:] in led_colours.RAINBOW:
-                for pixel_index in range(self.led_array_len):
-                    pixel_output[(pixel_index - 2):] = self.filter_pixel(current_color[:], 0.2)
-                    pixel_output[(pixel_index - 1):] = self.filter_pixel(current_color[:], 0.4)
-                    pixel_output[(pixel_index):] = self.filter_pixel(current_color[:], 1)
-                    pixel_output += '\x00' * (self.led_array_len - 1 - pixel_index)
-                    self.write_stream(pixel_output)
-                    self.spidev.flush()
-                    time.sleep((50) / 1000.0) #JC: 50 is args.refresh_rate from pixelpi.py
-                    pixel_output[((pixel_index - 2) * PIXEL_SIZE):] = self.filter_pixel(current_color[:], 0)
+    #receives a list of pixels and combines them into a string
+    #brightness = [0, 0.1, ... 1]
+    def routine_set_colours_list(self, pixels_list, brightness=1):
+        spi_output = bytearray(self.led_array_len * PIXEL_SIZE + 3)
+        spi_ready_pixel = bytearray(PIXEL_SIZE)
+        for idx in range(len(pixels_list)):
+            #adjust brightness and convert rgb to grb
+            spi_ready_pixel = self.filter_pixel(pixels_list[idx], brightness)
+            #set the pixel to the bytearray we wanna send via SPI
+            spi_output[idx*PIXEL_SIZE :] = self.filter_pixel(pixels_list[idx], brightness)
+        for idx in range(len(pixels_list), self.led_array_len):
+            #fill the rest of the string with a user-defined default colour
+            spi_output[idx*PIXEL_SIZE :] = self.filter_pixel(self.default_colour, 1)
+        self.write_stream(spi_output)
+        self.spidev.flush()
 
 
 class LedController:
@@ -106,6 +112,16 @@ class Pinger:
 if __name__ == '__main__':
     driv = lpd6803_driver(LED_STRIP_LEN)
     #driv.routine_chase()
-    driv.routine_all_on()
+    #driv.routine_all_on()
     driv.routine_all_off()
-    driv.routine_chase()
+    driv.routine_set_colours_list([led_colours.RED, led_colours.BLUE])
+    #driv.routine_chase()
+
+    #Pain the rainbow (kinda white, tho)
+    output_colours_list = [led_colours.GREEN, led_colours.YELLOW, led_colours.RED]
+    driv.routine_set_colours_list(output_colours_list)
+    #for i in range(0, LED_STRIP_LEN):
+    #    if (i < LED_STRIP_LEN) and (i < len(led_colours.RAINBOW)):
+    #        output_colours_list.append(led_colours.RAINBOW[i])
+    #        driv.routine_set_colours_list(output_colours_list)
+    #        time.sleep(2)
