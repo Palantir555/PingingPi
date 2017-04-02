@@ -1,23 +1,29 @@
+import signal
 import time
 import led_colours
 import binascii
 import sys
 from Queue import Queue
+from subprocess import Popen, PIPE
 
-PIXEL_SIZE=3 #imported from pixelpi.py
-LED_STRIP_LEN=47
-PING_SERVER="google.com"
-PING_DELAY=10
-GREEN_MAX=80
-YELLOW_MAX=120
-TIMEOUT_COLOUR=led_colours.RED
+#Config
+LED_STRIP_LEN = 47
+PING_SERVER = "google.com"
+DELAY_BETWEEN_PINGS = 10 #seconds
 
-class CliLogger:
-    def __init__(self):
-        pass
+MAXPING_NETWORK_OK   = 80 #milliseconds
+MAXPING_NETWORK_SLOW = 120 #milliseconds
+
+LEDCOLOUR_DEFAULT = led_colours.BLACK
+LEDCOLOUR_NETWORK_OK = led_colours.GREEN
+LEDCOLOUR_NETWORK_SLOW = led_colours.YELLOW
+LEDCOLOUR_NETWORK_ERROR = led_colours.RED
+
+#Macros
+PIXEL_SIZE = 3 #imported from pixelpi.py
 
 class lpd6803_driver:
-    default_colour = led_colours.BLACK
+    default_colour = LEDCOLOUR_DEFAULT
     def __init__(self, array_led_num, spi_dev_path='/dev/spidev0.0'):
         self.output_colour_queue = Queue(maxsize=array_led_num)
         self.spidev_path = spi_dev_path
@@ -42,18 +48,6 @@ class lpd6803_driver:
 
         self.spidev.write(bytearray(len(pixels) / 8 + 1))
 
-    def queue_put_colour(self, colour):
-        if self.output_colour_queue.full():
-            self.output_colour_queue.get()
-        self.output_colour_queue.put(colour)
-
-    def queue_display(self):
-        lis = list(self.output_colour_queue.queue)
-        ordered_list = list(reversed(lis))
-        while len(ordered_list) < self.led_array_len:
-            ordered_list.append(self.default_colour)
-        self.routine_set_colours_list(ordered_list)
-
     @staticmethod
     def pixel_adjust_brightness(input_pixel, brightness):
         input_pixel[0] = int(brightness * input_pixel[0])
@@ -73,6 +67,18 @@ class lpd6803_driver:
         input_pixel = self.pixel_adjust_brightness(input_pixel, brightness)
         input_pixel = self.pixel_rgb_to_brg(input_pixel)
         return input_pixel
+
+    def queue_put_colour(self, colour):
+        if self.output_colour_queue.full():
+            self.output_colour_queue.get()
+        self.output_colour_queue.put(colour)
+
+    def queue_display(self):
+        lis = list(self.output_colour_queue.queue)
+        ordered_list = list(reversed(lis))
+        while len(ordered_list) < self.led_array_len:
+            ordered_list.append(self.default_colour)
+        self.routine_set_colours_list(ordered_list)
 
     def routine_all_on(self):
         print("Turning all LEDs On")
@@ -106,33 +112,53 @@ class lpd6803_driver:
         self.write_stream(spi_output)
         self.spidev.flush()
 
+def ping_server(server="google.com"):
+    '''Ping $server, return a float with the ping response time or None in case
+    of timeout or error'''
+    try:
+        print "Pinging {0}".format(server)
+        process = Popen(['ping', '-c1', server], stdout=PIPE, stderr=PIPE)
+        stdout, stderr = process.communicate()
+    except subprocess.CalledProcessError as error:
+        print "Ping returned with error code [{0}]".format(error.returncode)
+        return None
 
-class LedController:
-    def __init__(self):
-        pass
+    if stdout.find("time=") >= 0:
+        time_str_idx = stdout.find("time=") + len("time=")
+        ms_str_idx = stdout[time_str_idx:].find("ms") + time_str_idx
+        time = float(stdout[time_str_idx : ms_str_idx].strip())
+        return time
+    else:
+        #TODO: Check what was the error, maybe review stderr, etc.
+        return None
 
-    def init_leds(self, default_colour=led_colours.WHITE):
-        pass
-
-class Pinger:
-    def __init__(self, target_servers=["google.com"], pings_delay=60):
-        pass
+def sigint_handler(signal, frame):
+    print "You pressed Ctrl+C - Initiating shutdown routine"
+    try:
+        driv.routine_all_off()
+    except NameError:
+        pass #driv has not been created yet
+    sys.exit(0)
 
 if __name__ == '__main__':
     driv = lpd6803_driver(LED_STRIP_LEN)
     driv.routine_all_off()
+    signal.signal(signal.SIGINT, sigint_handler)
 
-    output_colours_list = [led_colours.GREEN, led_colours.YELLOW, led_colours.RED]
-    #output_colours_list = led_colours.RAINBOW
-
-    col_idx = 0
     while True:
-        print "Starting new loop iteration"
-        for i in range(LED_STRIP_LEN):
-            driv.queue_put_colour(output_colours_list[col_idx])
-            driv.queue_display()
+        t = ping_server("bbc.co.uk")
+        if t:
+            print "Response time: [{0}]".format(t)
+        else:
+            print "Got no response"
 
-        #change colours in the next round
-        col_idx += 1
-        if col_idx >= len(output_colours_list):
-            col_idx = 0
+        if t is None:
+            driv.queue_put_colour(LEDCOLOUR_NETWORK_ERROR)
+        elif t <= MAXPING_NETWORK_OK:
+            driv.queue_put_colour(LEDCOLOUR_NETWORK_OK)
+        elif t <= MAXPING_NETWORK_SLOW:
+            driv.queue_put_colour(LEDCOLOUR_NETWORK_SLOW)
+        else:
+            driv.queue_put_colour(LEDCOLOUR_NETWORK_ERROR)
+        driv.queue_display()
+        time.sleep(DELAY_BETWEEN_PINGS)
