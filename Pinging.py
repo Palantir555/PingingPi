@@ -8,8 +8,8 @@ from subprocess import Popen, PIPE, CalledProcessError
 
 #Config
 LED_STRIP_LEN = 47
-PING_SERVER = "google.com"
-DELAY_BETWEEN_PINGS = 1 #seconds
+PING_SERVER = "bbc.co.uk"
+DELAY_BETWEEN_PINGS = 0.5 #seconds
 
 MAXPING_NETWORK_OK   = 80 #milliseconds
 MAXPING_NETWORK_SLOW = 120 #milliseconds
