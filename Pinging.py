@@ -4,18 +4,25 @@ import led_colours
 import binascii
 import sys
 from Queue import Queue
-from subprocess import Popen, PIPE
+from subprocess import Popen, PIPE, CalledProcessError
 
 #Config
 LED_STRIP_LEN = 47
 PING_SERVER = "google.com"
-DELAY_BETWEEN_PINGS = 10 #seconds
+DELAY_BETWEEN_PINGS = 1 #seconds
 
 MAXPING_NETWORK_OK   = 80 #milliseconds
 MAXPING_NETWORK_SLOW = 120 #milliseconds
 
-LEDCOLOUR_DEFAULT = led_colours.BLACK
-LEDCOLOUR_NETWORK_OK = led_colours.GREEN
+#Green/Yellow/Red colour scheme - Default to Black
+#LEDCOLOUR_DEFAULT = led_colours.BLACK
+#LEDCOLOUR_NETWORK_OK = led_colours.GREEN
+#LEDCOLOUR_NETWORK_SLOW = led_colours.YELLOW
+#LEDCOLOUR_NETWORK_ERROR = led_colours.RED
+
+#White/Yellow/Red colour scheme - Default to White
+LEDCOLOUR_DEFAULT = led_colours.WHITE
+LEDCOLOUR_NETWORK_OK = led_colours.WHITE
 LEDCOLOUR_NETWORK_SLOW = led_colours.YELLOW
 LEDCOLOUR_NETWORK_ERROR = led_colours.RED
 
@@ -117,9 +124,10 @@ def ping_server(server="google.com"):
     of timeout or error'''
     try:
         print "Pinging {0}".format(server)
-        process = Popen(['ping', '-c1', server], stdout=PIPE, stderr=PIPE)
+        process = Popen(['ping', '-w', str(MAXPING_NETWORK_SLOW/1000), '-c1', server],
+                        stdout=PIPE, stderr=PIPE)
         stdout, stderr = process.communicate()
-    except subprocess.CalledProcessError as error:
+    except CalledProcessError as error:
         print "Ping returned with error code [{0}]".format(error.returncode)
         return None
 
@@ -146,17 +154,17 @@ if __name__ == '__main__':
     signal.signal(signal.SIGINT, sigint_handler)
 
     while True:
-        t = ping_server("bbc.co.uk")
-        if t:
-            print "Response time: [{0}]".format(t)
+        response_time = ping_server("bbc.co.uk")
+        if response_time:
+            print "Response time: [{0}]".format(response_time)
         else:
             print "Got no response"
 
-        if t is None:
+        if response_time is None:
             driv.queue_put_colour(LEDCOLOUR_NETWORK_ERROR)
-        elif t <= MAXPING_NETWORK_OK:
+        elif response_time <= MAXPING_NETWORK_OK:
             driv.queue_put_colour(LEDCOLOUR_NETWORK_OK)
-        elif t <= MAXPING_NETWORK_SLOW:
+        elif response_time <= MAXPING_NETWORK_SLOW:
             driv.queue_put_colour(LEDCOLOUR_NETWORK_SLOW)
         else:
             driv.queue_put_colour(LEDCOLOUR_NETWORK_ERROR)
