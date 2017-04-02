@@ -2,6 +2,7 @@ import time
 import led_colours
 import binascii
 import sys
+from Queue import Queue
 
 PIXEL_SIZE=3 #imported from pixelpi.py
 LED_STRIP_LEN=47
@@ -18,6 +19,7 @@ class CliLogger:
 class lpd6803_driver:
     default_colour = led_colours.BLACK
     def __init__(self, array_led_num, spi_dev_path='/dev/spidev0.0'):
+        self.output_colour_queue = Queue(maxsize=array_led_num)
         self.spidev_path = spi_dev_path
         self.led_array_len = array_led_num
         self.spidev = file(self.spidev_path, "wb")
@@ -26,7 +28,6 @@ class lpd6803_driver:
         pixel_out_bytes = bytearray(2)
         self.spidev.write(bytearray(4))
         pixel_count = len(pixels) / PIXEL_SIZE
-        print "pixel_count:\t{0}".format(pixel_count)
         for pixel_index in range(pixel_count):
             pixel_in = bytearray(pixels[(pixel_index * PIXEL_SIZE):((pixel_index * PIXEL_SIZE) + PIXEL_SIZE)])
 
@@ -38,12 +39,20 @@ class lpd6803_driver:
             pixel_out_bytes[0] = (pixel_out & 0xFF00) >> 8
             pixel_out_bytes[1] = (pixel_out & 0x00FF) >> 0
             self.spidev.write(pixel_out_bytes)
-            print "pixel_index:     {0}".format(pixel_index)
-            print "pixel_in:        {0}".format(binascii.hexlify(pixel_in))
-            print "pixel_out:       {0}".format(pixel_out)
-            print "pixel_out_bytes: {0}".format(binascii.hexlify(pixel_out_bytes))
 
         self.spidev.write(bytearray(len(pixels) / 8 + 1))
+
+    def queue_put_colour(self, colour):
+        if self.output_colour_queue.full():
+            self.output_colour_queue.get()
+        self.output_colour_queue.put(colour)
+
+    def queue_display(self):
+        lis = list(self.output_colour_queue.queue)
+        ordered_list = list(reversed(lis))
+        while len(ordered_list) < self.led_array_len:
+            ordered_list.append(self.default_colour)
+        self.routine_set_colours_list(ordered_list)
 
     @staticmethod
     def pixel_adjust_brightness(input_pixel, brightness):
@@ -53,7 +62,7 @@ class lpd6803_driver:
         return input_pixel
 
     @staticmethod
-    def pixel_rgb_to_grb(input_pixel):
+    def pixel_rgb_to_brg(input_pixel):
         output_pixel = bytearray(PIXEL_SIZE)
         output_pixel[0] = input_pixel[2]
         output_pixel[1] = input_pixel[0]
@@ -62,7 +71,7 @@ class lpd6803_driver:
 
     def filter_pixel(self, input_pixel, brightness):
         input_pixel = self.pixel_adjust_brightness(input_pixel, brightness)
-        input_pixel = self.pixel_rgb_to_grb(input_pixel)
+        input_pixel = self.pixel_rgb_to_brg(input_pixel)
         return input_pixel
 
     def routine_all_on(self):
@@ -87,7 +96,7 @@ class lpd6803_driver:
         spi_output = bytearray(self.led_array_len * PIXEL_SIZE + 3)
         spi_ready_pixel = bytearray(PIXEL_SIZE)
         for idx in range(len(pixels_list)):
-            #adjust brightness and convert rgb to grb
+            #adjust brightness and convert rgb to brg
             spi_ready_pixel = self.filter_pixel(pixels_list[idx], brightness)
             #set the pixel to the bytearray we wanna send via SPI
             spi_output[idx*PIXEL_SIZE :] = self.filter_pixel(pixels_list[idx], brightness)
@@ -111,17 +120,19 @@ class Pinger:
 
 if __name__ == '__main__':
     driv = lpd6803_driver(LED_STRIP_LEN)
-    #driv.routine_chase()
-    #driv.routine_all_on()
     driv.routine_all_off()
-    driv.routine_set_colours_list([led_colours.RED, led_colours.BLUE])
-    #driv.routine_chase()
 
-    #Pain the rainbow (kinda white, tho)
     output_colours_list = [led_colours.GREEN, led_colours.YELLOW, led_colours.RED]
-    driv.routine_set_colours_list(output_colours_list)
-    #for i in range(0, LED_STRIP_LEN):
-    #    if (i < LED_STRIP_LEN) and (i < len(led_colours.RAINBOW)):
-    #        output_colours_list.append(led_colours.RAINBOW[i])
-    #        driv.routine_set_colours_list(output_colours_list)
-    #        time.sleep(2)
+    #output_colours_list = led_colours.RAINBOW
+
+    col_idx = 0
+    while True:
+        print "Starting new loop iteration"
+        for i in range(LED_STRIP_LEN):
+            driv.queue_put_colour(output_colours_list[col_idx])
+            driv.queue_display()
+
+        #change colours in the next round
+        col_idx += 1
+        if col_idx >= len(output_colours_list):
+            col_idx = 0
